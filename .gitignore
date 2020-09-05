@@ -50,3 +50,12 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+s
+*.pyc
+simbuild/*
+build/*
+*.xml
+TOSSIM.py
+_TOSSIMmodule.so
+
