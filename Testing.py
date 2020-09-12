@@ -31,8 +31,9 @@ def main():
     
     print "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
     
-    for i in s.r.:
-        print i;
+    s.runTime(1);
+    s.neighborDMP(1);
+    s.runTime(1);
 
 if __name__ == '__main__':
     main()

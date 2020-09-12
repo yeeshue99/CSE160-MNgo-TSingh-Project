@@ -9,13 +9,17 @@
 #include "../../includes/CommandMsg.h"
 #include "../../includes/command.h"
 #include "../../includes/channels.h"
+#include "../../includes/packet.h"
+#include "../../includes/sendInfo.h"
 
 module CommandHandlerP{
-   provides interface CommandHandler;
-   uses interface Receive;
-   uses interface Pool<message_t>;
-   uses interface Queue<message_t*>;
-   uses interface Packet;
+    provides interface CommandHandler;
+    uses interface Receive;
+    uses interface Pool<message_t>;
+    uses interface Queue<message_t*>;
+    uses interface Packet;
+
+    uses interface List<sendInfo> as relationList;
 }
 
 implementation{
@@ -40,6 +44,7 @@ implementation{
             // Change it to our type.
             msg = (CommandMsg*) payload;
 
+            dbg(COMMAND_CHANNEL, "***0 LSP of node  %d!\n",TOS_NODE_ID);
             dbg(COMMAND_CHANNEL, "A Command has been Issued.\n");
             buff = (uint8_t*) msg->payload;
             commandID = msg->id;
@@ -55,6 +60,23 @@ implementation{
 
             case CMD_NEIGHBOR_DUMP:
                 dbg(COMMAND_CHANNEL, "Command Type: Neighbor Dump\n");
+                //call CommandHandler.print();
+                if(call relationList.size() > 0)
+                    {
+                        uint16_t size = call relationList.size();
+                        uint16_t i = 0;
+
+                        //dbg(NEIGHBOR_CHANNEL, "***the NEIGHBOUR size of node %d is :%d\n",TOS_NODE_ID, neighborListSize);
+                        for(i = 0; i < size; i++)
+                        {
+                            sendInfo lspackets =  call relationList.get(i);
+                            dbg(COMMAND_CHANNEL,"Source:%d\tNeighbor:%d\tcost:%d\n",lspackets.src,lspackets.dest,lspackets.packet.payload);
+                        }
+                    }
+                    else
+                    {
+                        dbg(COMMAND_CHANNEL, "***0 LSP of node  %d!\n",TOS_NODE_ID);
+                    }
                 signal CommandHandler.printNeighbors();
                 break;
 
