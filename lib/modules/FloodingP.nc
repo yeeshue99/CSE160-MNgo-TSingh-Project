@@ -1,100 +1,157 @@
 /**
+ * ANDES Lab - University of California, Merced
+ *
  * @author UCM ANDES Lab
- * $Author: abeltran2 $
- * $LastChangedDate: 2014-08-31 16:06:26 -0700 (Sun, 31 Aug 2014) $
+ * @date   2013/09/03
  *
  */
-
-
-#include "../../includes/CommandMsg.h"
-#include "../../includes/command.h"
+#include "../../includes/packet.h"
+#include "../../includes/sendInfo.h"
 #include "../../includes/channels.h"
 
-module FloodingP{
+generic module FloodingP(){
+    // provides shows the interface we are implementing. See lib/interface/Flooding.nc
+    // to see what funcitons we need to implement.
    provides interface Flooding;
-   uses interface Receive;
-   uses interface Pool<message_t>;
-   uses interface Queue<message_t*>;
+
+   uses interface Queue<sendInfo*>;
+   uses interface Pool<sendInfo>;
+
+   uses interface Timer<TMilli> as sendTimer;
+
    uses interface Packet;
+   uses interface AMPacket;
+   uses interface AMSend;
+
+   uses interface Random;
 }
 
 implementation{
-    task void processCommand(){
-        if(! call Queue.empty()){
-            CommandMsg *msg;
-            uint8_t commandID;
-            uint8_t* buff;
-            message_t *raw_msg;
-            void *payload;
+   uint16_t sequenceNum = 0;
+   bool busy = FALSE;
+   message_t pkt;
 
-            // Pop message out of queue.
-            raw_msg = call Queue.dequeue();
-            payload = call Packet.getPayload(raw_msg, sizeof(CommandMsg));
+   error_t send(uint16_t src, uint16_t dest, pack *message);
 
-            // Check to see if the packet is valid.
-            if(!payload){
-                call Pool.put(raw_msg);
-                post processCommand();
-                return;
-            }
-            // Change it to our type.
-            msg = (CommandMsg*) payload;
+   // Use this to intiate a send task. We call this method so we can add
+   // a delay between sends. If we don't add a delay there may be collisions.
+   void postSendTask(){
+      // If a task already exist, we don't want to overwrite the clock, so
+      // we can ignore it.
+      if(call sendTimer.isRunning() == FALSE){
+          // A random element of delay is included to prevent congestion.
+         call sendTimer.startOneShot( (call Random.rand16() %300));
+      }
+   }
 
-            dbg(COMMAND_CHANNEL, "A Command has been Issued.\n");
-            buff = (uint8_t*) msg->payload;
-            commandID = msg->id;
+   // This is a wrapper around the am sender, that adds queuing and delayed
+   // sending
+   command error_t Flooding.send(pack msg, uint16_t dest) {
+       // First we check to see if we have room in our queue. Since TinyOS is
+       // designed for embedded systems, there is no dynamic memory. This forces
+       // us to allocate space in a pool where pointers can be retrieved. See
+       // FloodingC to see where we allocate space. Be sure to put the values
+       // back into the queue once you are done.
+      if(!call Pool.empty()){
+         sendInfo *input;
 
-            //Find out which command was called and call related command
-            switch(commandID){
-            // A ping will have the destination of the packet as the first
-            // value and the string in the remainder of the payload
-            case CMD_PING:
-                dbg(COMMAND_CHANNEL, "Command Type: Ping\n");
-                signal Flooding.ping(buff[0], &buff[1]);
-                break;
+         input = call Pool.get();
+         input->packet = msg;
+         input->dest = dest;
 
-            case CMD_NEIGHBOR_DUMP:
-                dbg(COMMAND_CHANNEL, "Command Type: Neighbor Dump\n");
-                signal Flooding.printNeighbors();
-                break;
+         // Now that we have a value from the pool we can put it into our queue.
+         // This is a FIFO queue.
+         call Queue.enqueue(input);
 
-            case CMD_LINKSTATE_DUMP:
-                dbg(COMMAND_CHANNEL, "Command Type: Link State Dump\n");
-                signal Flooding.printLinkState();
-                break;
+         // Start a send task which will be delayed.
+         postSendTask();
 
-            case CMD_ROUTETABLE_DUMP:
-                dbg(COMMAND_CHANNEL, "Command Type: Route Table Dump\n");
-                signal Flooding.printRouteTable();
-                break;
+         return SUCCESS;
+      }
+      return FAIL;
+   }
 
-            case CMD_TEST_CLIENT:
-                dbg(COMMAND_CHANNEL, "Command Type: Client\n");
-                signal Flooding.setTestClient();
-                break;
+   task void sendBufferTask(){
+       // If we have a values in our queue and the radio is not busy, then
+       // attempt to send a packet.
+      if(!call Queue.empty() && !busy){
+         sendInfo *info;
+         // We are peeking since, there is a possibility that the value will not
+         // be successfuly sent and we would like to continue to attempt to send
+         // it until we are successful. There is no limit on how many attempts
+         // can be made.
+         info = call Queue.head();
 
-            case CMD_TEST_SERVER:
-                dbg(COMMAND_CHANNEL, "Command Type: Client\n");
-                signal Flooding.setTestServer();
-                break;
+         // Attempt to send it.
+         if(SUCCESS == send(info->src,info->dest, &(info->packet))){
+            //Release resources used if the attempt was successful
+            call Queue.dequeue();
+            call Pool.put(info);
+         }
 
-            default:
-                dbg(COMMAND_CHANNEL, "CMD_ERROR: \"%d\" does not match any known commands.\n", msg->id);
-                break;
-            }
-            call Pool.put(raw_msg);
-        }
 
-        if(! call Queue.empty()){
-            post processCommand();
-        }
-    }
-    event message_t* Receive.receive(message_t* raw_msg, void* payload, uint8_t len){
-        if (! call Pool.empty()){
-            call Queue.enqueue(raw_msg);
-            post processCommand();
-            return call Pool.get();
-        }
-        return raw_msg;
-    }
+      }
+
+      // While the queue is not empty, we should be re running this task.
+      if(!call Queue.empty()){
+         postSendTask();
+      }
+   }
+
+   // Once the timer fires, we post the sendBufferTask(). This will allow
+   // the OS's scheduler to attempt to send a packet at the next empty slot.
+   event void sendTimer.fired(){
+      post sendBufferTask();
+   }
+
+   /*
+    * Send a packet
+    *
+    *@param
+    *	src - source address
+    *	dest - destination address
+    *	msg - payload to be sent
+    *
+    *@return
+    *	error_t - Returns SUCCESS, EBUSY when the system is too busy using the radio, or FAIL.
+    */
+   error_t send(uint16_t src, uint16_t dest, pack *message){
+      if(!busy){
+          // We are putting data into the payload of the pkt struct. getPayload
+          // aquires the payload pointer from &pkt and we type cast it to our own
+          // packet type.
+         pack* msg = (pack *)(call Packet.getPayload(&pkt, sizeof(pack) ));
+
+         // This coppies the data we have in our message to this new packet type.
+         *msg = *message;
+
+         // Attempt to send the packet.
+         if(call AMSend.send(dest, &pkt, sizeof(pack)) ==SUCCESS){
+            // See AMSend.sendDone(msg, error) to see what happens after.
+            busy = TRUE;
+            return SUCCESS;
+         }else{
+             // This shouldn't really happen.
+            dbg(GENERAL_CHANNEL,"The radio is busy, or something\n");
+            return FAIL;
+         }
+      }else{
+         dbg(GENERAL_CHANNEL, "The radio is busy");
+         return EBUSY;
+      }
+
+      // This definitely shouldn't happen.
+      dbg(GENERAL_CHANNEL, "FAILED!?");
+      return FAIL;
+   }
+
+   // This event occurs once the message has finished sending. We can attempt
+   // to send again at that point.
+   event void AMSend.sendDone(message_t* msg, error_t error){
+      //Clear Flag, we can send again.
+      if(&pkt == msg){
+         busy = FALSE;
+         postSendTask();
+      }
+   }
 }

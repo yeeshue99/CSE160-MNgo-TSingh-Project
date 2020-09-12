@@ -23,7 +23,7 @@ module Node{
 
    uses interface CommandHandler;
    
-   uses interface Flooding;
+   //uses interface Flooding;
 }
 
 implementation{
