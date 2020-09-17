@@ -9,145 +9,76 @@
 #include "../../includes/sendInfo.h"
 #include "../../includes/channels.h"
 
+/*  Neighbor entry
+ *      Neighbor reference(Unknown. Packet?)
+ *      Quality of link(float?)
+ *      Active(bool)
+ */
+
+
+
 generic module NeighborDiscoveryP(){
     // provides shows the interface we are implementing. See lib/interface/NeighborDiscovery.nc
     // to see what funcitons we need to implement.
-   provides interface NeighborDiscovery;
+    provides interface NeighborDiscovery;
 
-   uses interface Queue<sendInfo*>;
-   uses interface Pool<sendInfo>;
+    uses interface Timer<TMilli> as neigborDiscoveryTimer;
+    uses interface SimpleSend as sender;
+    uses interface List<pack> as neighborList;
+    uses interface Random as Random;
 
-   uses interface Timer<TMilli> as sendTimer;
-
-   uses interface Packet;
-   uses interface AMPacket;
-   uses interface AMSend;
-
-   uses interface Random;
 }
 
 implementation{
-   uint16_t sequenceNum = 0;
-   bool busy = FALSE;
-   message_t pkt;
+    uint16_t sequenceNum = 0;
+    bool busy = FALSE;
+    pack pkt;
 
-   error_t send(uint16_t src, uint16_t dest, pack *message);
+    command void NeighborDiscovery.start(){
+        // one shot timer and include random element to it.
+        uint32_t startTimer;
+        dbg(GENERAL_CHANNEL, "Booted\n");
+        startTimer = (20000 + (uint16_t) ((call Random.rand16())%5000));;
+        //call neigbordiscoveryTimer.startPeriodic(startTimer);
+        call neigbordiscoveryTimer.startOneShot(10000);
+    }
 
-   // Use this to intiate a send task. We call this method so we can add
-   // a delay between sends. If we don't add a delay there may be collisions.
-   void postSendTask(){
-      // If a task already exist, we don't want to overwrite the clock, so
-      // we can ignore it.
-      if(call sendTimer.isRunning() == FALSE){
-          // A random element of delay is included to prevent congestion.
-         call sendTimer.startOneShot( (call Random.rand16() %300));
-      }
-   }
+    command void NeighborDiscovery.neighborReceived(pack *myMsg){
+        if(!findMyNeighbor(myMsg)){
+            call neighborList.pushback(*myMsg);
+        }
 
-   // This is a wrapper around the am sender, that adds queuing and delayed
-   // sending
-   command error_t NeighborDiscovery.send(pack msg, uint16_t dest) {
-       // First we check to see if we have room in our queue. Since TinyOS is
-       // designed for embedded systems, there is no dynamic memory. This forces
-       // us to allocate space in a pool where pointers can be retrieved. See
-       // NeighborDiscoveryC to see where we allocate space. Be sure to put the values
-       // back into the queue once you are done.
-      if(!call Pool.empty()){
-         sendInfo *input;
+    }
 
-         input = call Pool.get();
-         input->packet = msg;
-         input->dest = dest;
+    event void neigbordiscoveryTimer.fired(){
+        char* neighborPayload = "Neighbor Discovery";
+        uint16_t size = call neighborList.size();
+        uint16_t i = 0;
+        if(neighborAge==MAX_NEIGHBOR_AGE){
+            //dbg(NEIGHBOR_CHANNEL,"removing neighbor of %d with Age %d \n",TOS_NODE_ID,neighborAge);
+            neighborAge = 0;
+            for(i = 0; i < size; i++){
+                call neighborList.popfront();
+            }
+        }
+        makePack(&pkt, TOS_NODE_ID, AM_BROADCAST_ADDR, 2, PROTOCOL_PING, seqNumber,  (uint8_t*) neighborPayload, PACKET_MAX_PAYLOAD_SIZE);
+        neighborAge++;
+        //Check TOS_NODE_ID and destination
+        call FloodSender.send(sendPackage, AM_BROADCAST_ADDR);
+    }
 
-         // Now that we have a value from the pool we can put it into our queue.
-         // This is a FIFO queue.
-         call Queue.enqueue(input);
+    void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t protocol, uint16_t seq, uint8_t* payload, uint8_t length){
+        Package->src = src;
+        Package->dest = dest;
+        Package->TTL = TTL;
+        Package->seq = seq;
+        Package->protocol = protocol;
+        memcpy(Package->payload, payload, length);
+    }
 
-         // Start a send task which will be delayed.
-         postSendTask();
+    //event void AMReceiver.
 
-         return SUCCESS;
-      }
-      return FAIL;
-   }
-
-   task void sendBufferTask(){
-       // If we have a values in our queue and the radio is not busy, then
-       // attempt to send a packet.
-      if(!call Queue.empty() && !busy){
-         sendInfo *info;
-         // We are peeking since, there is a possibility that the value will not
-         // be successfuly sent and we would like to continue to attempt to send
-         // it until we are successful. There is no limit on how many attempts
-         // can be made.
-         info = call Queue.head();
-
-         // Attempt to send it.
-         if(SUCCESS == send(info->src,info->dest, &(info->packet))){
-            //Release resources used if the attempt was successful
-            call Queue.dequeue();
-            call Pool.put(info);
-         }
-
-
-      }
-
-      // While the queue is not empty, we should be re running this task.
-      if(!call Queue.empty()){
-         postSendTask();
-      }
-   }
-
-   // Once the timer fires, we post the sendBufferTask(). This will allow
-   // the OS's scheduler to attempt to send a packet at the next empty slot.
-   event void sendTimer.fired(){
-      post sendBufferTask();
-   }
-
-   /*
-    * Send a packet
-    *
-    *@param
-    *	src - source address
-    *	dest - destination address
-    *	msg - payload to be sent
-    *
-    *@return
-    *	error_t - Returns SUCCESS, EBUSY when the system is too busy using the radio, or FAIL.
-    */
-   error_t send(uint16_t src, uint16_t dest, pack *message){
-      if(!busy){
-          // We are putting data into the payload of the pkt struct. getPayload
-          // aquires the payload pointer from &pkt and we type cast it to our own
-          // packet type.
-         pack* msg = (pack *)(call Packet.getPayload(&pkt, sizeof(pack) ));
-
-         // This coppies the data we have in our message to this new packet type.
-         *msg = *message;
-
-         // Attempt to send the packet.
-         if(call AMSend.send(dest, &pkt, sizeof(pack)) ==SUCCESS){
-            // See AMSend.sendDone(msg, error) to see what happens after.
-            busy = TRUE;
-            return SUCCESS;
-         }else{
-             // This shouldn't really happen.
-            dbg(GENERAL_CHANNEL,"The radio is busy, or something\n");
-            return FAIL;
-         }
-      }else{
-         dbg(GENERAL_CHANNEL, "The radio is busy");
-         return EBUSY;
-      }
-
-      // This definitely shouldn't happen.
-      dbg(GENERAL_CHANNEL, "FAILED!?");
-      return FAIL;
-   }
-
-   // This event occurs once the message has finished sending. We can attempt
-   // to send again at that point.
-   event void AMSend.sendDone(message_t* msg, error_t error){
+    event void AMSend.sendDone(message_t* msg, error_t error){
       //Clear Flag, we can send again.
       if(&pkt == msg){
          busy = FALSE;

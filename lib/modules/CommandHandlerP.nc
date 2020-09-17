@@ -44,7 +44,7 @@ implementation{
             // Change it to our type.
             msg = (CommandMsg*) payload;
 
-            dbg(COMMAND_CHANNEL, "***0 LSP of node  %d!\n",TOS_NODE_ID);
+            dbg(COMMAND_CHANNEL, "***0 LSP of node  %d!\n", TOS_NODE_ID);
             dbg(COMMAND_CHANNEL, "A Command has been Issued.\n");
             buff = (uint8_t*) msg->payload;
             commandID = msg->id;
@@ -61,6 +61,7 @@ implementation{
             case CMD_NEIGHBOR_DUMP:
                 dbg(COMMAND_CHANNEL, "Command Type: Neighbor Dump\n");
                 //call CommandHandler.print();
+                /*
                 if(call relationList.size() > 0)
                     {
                         uint16_t size = call relationList.size();
@@ -77,6 +78,7 @@ implementation{
                     {
                         dbg(COMMAND_CHANNEL, "***0 LSP of node  %d!\n",TOS_NODE_ID);
                     }
+                    */
                 signal CommandHandler.printNeighbors();
                 break;
 

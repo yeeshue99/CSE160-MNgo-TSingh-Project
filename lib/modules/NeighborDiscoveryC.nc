@@ -1,29 +1,23 @@
 #include "../../includes/am_types.h"
 
 generic configuration NeighborDiscoveryC(int channel){
-   provides interface NeighborDiscovery;
+    provides interface NeighborDiscovery;
+    uses interface List<pack> as neighborListC;
 }
 
 implementation{
-   components new NeighborDiscoveryP();
-   NeighborDiscovery = NeighborDiscoveryP.NeighborDiscovery;
+    components new NeighborDiscoveryP();
+    NeighborDiscovery = NeighborDiscoveryP.NeighborDiscovery;
 
-   components new TimerMilliC() as sendTimer;
-   components RandomC as Random;
-   components new AMSenderC(channel);
+    components new SimpleSendC(AM_NEIGHBOR);
+    components new AMReceiverC(AM_NEIGHBOR);
 
-   //Timers
-   NeighborDiscoveryP.sendTimer -> sendTimer;
-   NeighborDiscoveryP.Random -> Random;
 
-   NeighborDiscoveryP.Packet -> AMSenderC;
-   NeighborDiscoveryP.AMPacket -> AMSenderC;
-   NeighborDiscoveryP.AMSend -> AMSenderC;
+    components new TimerMilliC() as sendTimer;
+    NeighborDiscoveryP.sendTimer -> neigborDiscoveryTimer;
+    
+    components RandomC as Random;
+    NeighborDiscoveryP.Random -> Random;
 
-   //Lists
-   components new PoolC(sendInfo, 20);
-   components new QueueC(sendInfo*, 20);
-
-   NeighborDiscoveryP.Pool -> PoolC;
-   NeighborDiscoveryP.Queue -> QueueC;
+    NeighborDiscoveryP.neighborList = neighborListC;
 }
