@@ -26,7 +26,6 @@ generic module NeighborDiscoveryP(){
     uses interface SimpleSend as sender;
     uses interface List<pack> as neighborList;
     uses interface Random as Random;
-
 }
 
 implementation{

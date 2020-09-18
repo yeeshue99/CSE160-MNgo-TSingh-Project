@@ -1,29 +1,23 @@
 #include "../../includes/am_types.h"
 
 generic configuration FloodingC(int channel){
-   provides interface Flooding;
+    provides interface Flooding;
+    uses interface List<pack> as neighborListC;
 }
 
 implementation{
-   components new FloodingP();
-   Flooding = FloodingP.Flooding;
+    components new FloodingP();
+    Flooding = FloodingP.Flooding;
 
-   components new TimerMilliC() as sendTimer;
-   components RandomC as Random;
-   components new AMSenderC(channel);
+    components new SimpleSendC(AM_NEIGHBOR);
+    components new AMReceiverC(AM_NEIGHBOR);
 
-   //Timers
-   FloodingP.sendTimer -> sendTimer;
-   FloodingP.Random -> Random;
 
-   FloodingP.Packet -> AMSenderC;
-   FloodingP.AMPacket -> AMSenderC;
-   FloodingP.AMSend -> AMSenderC;
+    components new TimerMilliC() as sendTimer;
+    FloodingP.sendTimer -> neigborDiscoveryTimer;
+    
+    components RandomC as Random;
+    FloodingP.Random -> Random;
 
-   //Lists
-   components new PoolC(sendInfo, 20);
-   components new QueueC(sendInfo*, 20);
-
-   FloodingP.Pool -> PoolC;
-   FloodingP.Queue -> QueueC;
+    FloodingP.neighborList = neighborListC;
 }
